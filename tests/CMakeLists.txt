@@ -1,0 +1,1 @@
+# Tests are registered in the root CMakeLists.txt.

@@ -1,0 +1,6 @@
+/build/
+/.cache/
+/data/logs/*
+!/data/logs/.gitkeep
+/data/recordings/*
+!/data/recordings/.gitkeep
