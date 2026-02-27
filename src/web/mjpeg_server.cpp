@@ -63,6 +63,11 @@ void MJPEGServer::addRoute(const std::string& route) {
     }
 }
 
+void MJPEGServer::addTextRoute(const std::string& route, const std::string& content_type) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    latest_text_by_route_[route] = std::make_pair(content_type, std::string{});
+}
+
 void MJPEGServer::updateFrame(const std::string& route, const cv::Mat& bgr_frame, int jpeg_quality) {
     if (bgr_frame.empty()) {
         return;
@@ -80,6 +85,19 @@ void MJPEGServer::updateFrame(const std::string& route, const cv::Mat& bgr_frame
     latest_jpeg_by_route_[route] = std::move(encoded);
 }
 
+void MJPEGServer::updateGrayFrame(const std::string& route, const cv::Mat& gray_frame, int jpeg_quality) {
+    if (gray_frame.empty() || gray_frame.type() != CV_8UC1) {
+        return;
+    }
+    std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, jpeg_quality};
+    std::vector<unsigned char> encoded;
+    if (!cv::imencode(".jpg", gray_frame, encoded, params)) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    latest_jpeg_by_route_[route] = std::move(encoded);
+}
+
 std::vector<unsigned char> MJPEGServer::latestJpeg(const std::string& route) const {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = latest_jpeg_by_route_.find(route);
@@ -87,6 +105,16 @@ std::vector<unsigned char> MJPEGServer::latestJpeg(const std::string& route) con
         return {};
     }
     return it->second;
+}
+
+void MJPEGServer::updateText(const std::string& route, const std::string& payload) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = latest_text_by_route_.find(route);
+    if (it == latest_text_by_route_.end()) {
+        latest_text_by_route_[route] = std::make_pair(std::string("application/json"), payload);
+        return;
+    }
+    it->second.second = payload;
 }
 
 std::string MJPEGServer::multipartContentType() const {
@@ -193,6 +221,22 @@ bool MJPEGServer::handleClient(int client_fd) {
     }
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        const auto text_it = latest_text_by_route_.find(path);
+        if (text_it != latest_text_by_route_.end()) {
+            const std::string& ctype = text_it->second.first;
+            const std::string& body = text_it->second.second;
+            const std::string header =
+                "HTTP/1.1 200 OK\r\n"
+                "Cache-Control: no-cache\r\n"
+                "Connection: close\r\n"
+                "Content-Type: " + ctype + "\r\n"
+                "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n";
+            send(client_fd, header.data(), header.size(), 0);
+            if (!body.empty()) {
+                send(client_fd, body.data(), body.size(), 0);
+            }
+            return true;
+        }
         if (latest_jpeg_by_route_.find(path) == latest_jpeg_by_route_.end()) {
             const std::string not_found = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
             send(client_fd, not_found.data(), not_found.size(), 0);

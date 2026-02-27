@@ -5,10 +5,21 @@
 
 #include "core/time_utils.hpp"
 
+#ifdef __linux__
+#include <unistd.h>
+#endif
+
 namespace bev {
 
 bool CameraIngest::openV4L2(int device_index, std::string& error) {
-    if (!cap_.open(device_index)) {
+#ifdef __linux__
+    const std::string dev = "/dev/video" + std::to_string(device_index);
+    if (::access(dev.c_str(), F_OK) != 0) {
+        error = "V4L2 device not found: " + dev;
+        return false;
+    }
+#endif
+    if (!cap_.open(device_index, cv::CAP_V4L2)) {
         error = "failed to open V4L2 camera device index " + std::to_string(device_index);
         return false;
     }
@@ -42,10 +53,6 @@ bool CameraIngest::openDevice(const CameraConfig& config, std::string& error) {
         }
     } else {
         opened = openV4L2(config_.device_index, open_error);
-        if (!opened && !config_.gstreamer_pipeline.empty()) {
-            // Optional fallback in opposite direction if V4L2 fails.
-            opened = openGStreamer(config_.gstreamer_pipeline, open_error);
-        }
     }
 
     if (!opened) {

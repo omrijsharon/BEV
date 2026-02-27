@@ -25,6 +25,11 @@ public:
     static bool shouldReinitialize(const std::vector<TrackPoint>& tracks, int min_valid_tracks);
     static void invalidateAll(std::vector<TrackPoint>& tracks);
     static float meanConfidence(const std::vector<TrackPoint>& tracks);
+    static float estimateOmegaRadPerSec(
+        const std::vector<cv::Point2f>& prev_points,
+        const std::vector<cv::Point2f>& curr_points,
+        float dt_s,
+        const std::vector<float>* weights = nullptr);
     static RecoveryState updateRecoveryState(
         const RecoveryState& prev,
         const std::vector<TrackPoint>& tracks,

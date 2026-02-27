@@ -8,6 +8,13 @@ namespace bev {
 
 class KeypointInitializer {
 public:
+    static void initializeShiTomasiInPlace(
+        const cv::Mat& gray,
+        int max_points,
+        std::vector<cv::Point2f>& out_points,
+        double quality_level = 0.01,
+        double min_distance = 8.0);
+
     static std::vector<cv::Point2f> initializeShiTomasi(
         const cv::Mat& gray,
         int max_points,

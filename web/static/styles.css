@@ -45,4 +45,5 @@ img {
   background: #dce6f3;
   border-radius: 8px;
   object-fit: contain;
+  transform-origin: center center;
 }

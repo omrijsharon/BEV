@@ -16,6 +16,8 @@ camera_mount:
 
 tracking:
   num_keypoints: 80
+  # Downscale factor for tracking stage only (BEV/map stay full-res).
+  processing_scale: 1.0
   template_size: 21
   coarse_crop_size: 64
   fine_crop_size: 24
@@ -31,3 +33,48 @@ map:
   initial_width: 2000
   initial_height: 2000
   expand_margin_px: 150
+
+ipc:
+  frame_pool_slots: 32
+  frame_payload_bytes: 921600
+  frame_pool_slots_camera: 16
+  frame_pool_slots_bev: 32
+  frame_pool_slots_map: 16
+  frame_payload_bytes_camera: 921600
+  frame_payload_bytes_bev: 307200
+  frame_payload_bytes_map: 4000000
+  ring_capacity_cam_to_bev: 256
+  ring_capacity_fc_to_bev: 512
+  ring_capacity_bev_to_track: 256
+  ring_capacity_track_to_map: 256
+  ring_capacity_track_to_web: 128
+  ring_capacity_map_to_web: 128
+  max_attitude_age_ms: 100
+  max_interp_gap_ms: 60
+  startup_min_fc_buffer: 4
+  web_jpeg_quality_default: 75
+  web_jpeg_quality_min: 45
+  web_quality_step: 5
+  web_drop_threshold_per_sec: 50
+  web_dashboard_period_ms: 5
+  web_body_view_mode: "rotate_world_client" # options are: "rotate_world_client", "rp_only_backend"
+  # Adaptive camera FPS governor:
+  # reduces camera rate under backlog pressure and raises it back when stable.
+  adaptive_camera_fps_enable: true
+  adaptive_camera_fps_min: 8
+  adaptive_camera_fps_max: 30
+  adaptive_camera_fps_step: 1
+  adaptive_backlog_low: 1
+  adaptive_backlog_high: 8
+  adaptive_eval_period_ms: 1000
+  adaptive_stable_intervals_for_up: 2
+  adaptive_stable_intervals_for_down: 1
+  # Thermal mitigation:
+  thermal_mitigation_enable: true
+  thermal_limit_c: 80.0
+  thermal_resume_c: 75.0
+  thermal_fps_cap: 12
+  thermal_check_period_ms: 1000
+  shm_namespace: "/bev_ipc"
+  queue_policy: "drop_old_keep_latest"
+  use_eventfd: true

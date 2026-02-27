@@ -23,7 +23,10 @@ public:
 
     void addRoute(const std::string& route);
     void updateFrame(const std::string& route, const cv::Mat& bgr_frame, int jpeg_quality = 80);
+    void updateGrayFrame(const std::string& route, const cv::Mat& gray_frame, int jpeg_quality = 80);
     std::vector<unsigned char> latestJpeg(const std::string& route) const;
+    void addTextRoute(const std::string& route, const std::string& content_type = "application/json");
+    void updateText(const std::string& route, const std::string& payload);
 
     std::string multipartContentType() const;
     std::string makeMultipartFrame(const std::string& route) const;
@@ -40,6 +43,7 @@ private:
 
     mutable std::mutex mutex_;
     std::map<std::string, std::vector<unsigned char>> latest_jpeg_by_route_;
+    std::map<std::string, std::pair<std::string, std::string>> latest_text_by_route_;
 };
 
 }  // namespace bev

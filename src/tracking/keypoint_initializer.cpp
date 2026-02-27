@@ -4,17 +4,27 @@
 
 namespace bev {
 
+void KeypointInitializer::initializeShiTomasiInPlace(
+    const cv::Mat& gray,
+    int max_points,
+    std::vector<cv::Point2f>& out_points,
+    double quality_level,
+    double min_distance) {
+    out_points.clear();
+    if (gray.empty() || gray.type() != CV_8UC1 || max_points <= 0) {
+        return;
+    }
+    out_points.reserve(static_cast<std::size_t>(std::max(0, max_points)));
+    cv::goodFeaturesToTrack(gray, out_points, max_points, quality_level, min_distance);
+}
+
 std::vector<cv::Point2f> KeypointInitializer::initializeShiTomasi(
     const cv::Mat& gray,
     int max_points,
     double quality_level,
     double min_distance) {
     std::vector<cv::Point2f> points;
-    if (gray.empty() || gray.type() != CV_8UC1 || max_points <= 0) {
-        return points;
-    }
-
-    cv::goodFeaturesToTrack(gray, points, max_points, quality_level, min_distance);
+    initializeShiTomasiInPlace(gray, max_points, points, quality_level, min_distance);
     return points;
 }
 

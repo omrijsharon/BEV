@@ -12,11 +12,13 @@ find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs videoio highgui c
 
 add_library(bev_core
     src/core/config.cpp
+    src/core/fps_governor.cpp
     src/core/math_utils.cpp
     src/core/time_utils.cpp
     src/core/telemetry.cpp
     src/msp/msp_bridge.cpp
     src/msp/betaflight_msp_adapter.cpp
+    src/msp/attitude_sync.cpp
     src/camera/camera_calibration.cpp
     src/camera/camera_ingest.cpp
     src/bev/bev_warp.cpp
@@ -28,6 +30,11 @@ add_library(bev_core
     src/map/minimap_builder.cpp
     src/web/mjpeg_server.cpp
     src/web/dashboard_renderer.cpp
+    src/ipc/frame_pool.cpp
+    src/ipc/notifier.cpp
+    src/ipc/shm_spsc_ring.cpp
+    src/ipc/shared_state.cpp
+    src/ipc/control_plane.cpp
 )
 
 target_include_directories(bev_core
@@ -46,6 +53,18 @@ endif()
 add_executable(bev_app src/main.cpp)
 target_link_libraries(bev_app PRIVATE bev_core)
 
+add_executable(bev_mp_node src/mp_node.cpp)
+target_link_libraries(bev_mp_node PRIVATE bev_core)
+
+add_executable(bev_ctl src/bev_ctl.cpp)
+target_link_libraries(bev_ctl PRIVATE bev_core)
+
+add_executable(bev_bench_ipc tools/bench_ipc.cpp)
+target_link_libraries(bev_bench_ipc PRIVATE bev_core)
+
+add_executable(bev_bench_pipeline tools/bench_pipeline.cpp)
+target_link_libraries(bev_bench_pipeline PRIVATE bev_core)
+
 if(BEV_BUILD_TESTS)
     enable_testing()
 
@@ -56,6 +75,10 @@ if(BEV_BUILD_TESTS)
     add_executable(test_config_validation tests/unit/test_config_validation.cpp)
     target_link_libraries(test_config_validation PRIVATE bev_core)
     add_test(NAME test_config_validation COMMAND test_config_validation)
+
+    add_executable(test_fps_governor tests/unit/test_fps_governor.cpp)
+    target_link_libraries(test_fps_governor PRIVATE bev_core)
+    add_test(NAME test_fps_governor COMMAND test_fps_governor)
 
     add_executable(test_tracker_coordinates tests/unit/test_tracker_coordinates.cpp)
     target_link_libraries(test_tracker_coordinates PRIVATE bev_core)
@@ -68,6 +91,10 @@ if(BEV_BUILD_TESTS)
     add_executable(test_msp_bridge tests/unit/test_msp_bridge.cpp)
     target_link_libraries(test_msp_bridge PRIVATE bev_core)
     add_test(NAME test_msp_bridge COMMAND test_msp_bridge)
+
+    add_executable(test_attitude_sync tests/unit/test_attitude_sync.cpp)
+    target_link_libraries(test_attitude_sync PRIVATE bev_core)
+    add_test(NAME test_attitude_sync COMMAND test_attitude_sync)
 
     add_executable(test_bev_warp tests/unit/test_bev_warp.cpp)
     target_link_libraries(test_bev_warp PRIVATE bev_core)
@@ -97,6 +124,38 @@ if(BEV_BUILD_TESTS)
     target_link_libraries(test_track_manager PRIVATE bev_core)
     add_test(NAME test_track_manager COMMAND test_track_manager)
 
+    add_executable(test_ipc_descriptors tests/unit/test_ipc_descriptors.cpp)
+    target_link_libraries(test_ipc_descriptors PRIVATE bev_core)
+    add_test(NAME test_ipc_descriptors COMMAND test_ipc_descriptors)
+
+    add_executable(test_ipc_spsc_ring tests/unit/test_ipc_spsc_ring.cpp)
+    target_link_libraries(test_ipc_spsc_ring PRIVATE bev_core)
+    add_test(NAME test_ipc_spsc_ring COMMAND test_ipc_spsc_ring)
+
+    add_executable(test_ipc_frame_pool tests/unit/test_ipc_frame_pool.cpp)
+    target_link_libraries(test_ipc_frame_pool PRIVATE bev_core)
+    add_test(NAME test_ipc_frame_pool COMMAND test_ipc_frame_pool)
+
+    add_executable(test_ipc_notifier tests/unit/test_ipc_notifier.cpp)
+    target_link_libraries(test_ipc_notifier PRIVATE bev_core)
+    add_test(NAME test_ipc_notifier COMMAND test_ipc_notifier)
+
+    add_executable(test_ipc_shm_spsc_ring tests/unit/test_ipc_shm_spsc_ring.cpp)
+    target_link_libraries(test_ipc_shm_spsc_ring PRIVATE bev_core)
+    add_test(NAME test_ipc_shm_spsc_ring COMMAND test_ipc_shm_spsc_ring)
+
+    add_executable(test_control_plane tests/unit/test_control_plane.cpp)
+    target_link_libraries(test_control_plane PRIVATE bev_core)
+    add_test(NAME test_control_plane COMMAND test_control_plane)
+
+    add_executable(test_shared_state tests/unit/test_shared_state.cpp)
+    target_link_libraries(test_shared_state PRIVATE bev_core)
+    add_test(NAME test_shared_state COMMAND test_shared_state)
+
+    add_executable(test_ipc_protocol_mismatch tests/unit/test_ipc_protocol_mismatch.cpp)
+    target_link_libraries(test_ipc_protocol_mismatch PRIVATE bev_core)
+    add_test(NAME test_ipc_protocol_mismatch COMMAND test_ipc_protocol_mismatch)
+
     add_executable(test_registration_refiner tests/unit/test_registration_refiner.cpp)
     target_link_libraries(test_registration_refiner PRIVATE bev_core)
     add_test(NAME test_registration_refiner COMMAND test_registration_refiner)
@@ -104,6 +163,10 @@ if(BEV_BUILD_TESTS)
     add_executable(test_template_match tests/unit/test_template_match.cpp)
     target_link_libraries(test_template_match PRIVATE bev_core)
     add_test(NAME test_template_match COMMAND test_template_match)
+
+    add_executable(test_live_velocity_estimator tests/unit/test_live_velocity_estimator.cpp)
+    target_link_libraries(test_live_velocity_estimator PRIVATE bev_core)
+    add_test(NAME test_live_velocity_estimator COMMAND test_live_velocity_estimator)
 
     add_executable(test_minimap_builder tests/unit/test_minimap_builder.cpp)
     target_link_libraries(test_minimap_builder PRIVATE bev_core)
@@ -120,4 +183,12 @@ if(BEV_BUILD_TESTS)
     add_executable(test_minimap_replay tests/integration/test_minimap_replay.cpp)
     target_link_libraries(test_minimap_replay PRIVATE bev_core)
     add_test(NAME test_minimap_replay COMMAND test_minimap_replay)
+
+    add_executable(test_overload_drop_policy tests/integration/test_overload_drop_policy.cpp)
+    target_link_libraries(test_overload_drop_policy PRIVATE bev_core)
+    add_test(NAME test_overload_drop_policy COMMAND test_overload_drop_policy)
+
+    add_executable(test_crash_restart_resilience tests/integration/test_crash_restart_resilience.cpp)
+    target_link_libraries(test_crash_restart_resilience PRIVATE bev_core)
+    add_test(NAME test_crash_restart_resilience COMMAND test_crash_restart_resilience)
 endif()

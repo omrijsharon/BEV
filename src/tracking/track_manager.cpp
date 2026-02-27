@@ -56,6 +56,49 @@ float TrackManager::meanConfidence(const std::vector<TrackPoint>& tracks) {
     return (count > 0) ? (sum / static_cast<float>(count)) : 0.0F;
 }
 
+float TrackManager::estimateOmegaRadPerSec(
+    const std::vector<cv::Point2f>& prev_points,
+    const std::vector<cv::Point2f>& curr_points,
+    float dt_s,
+    const std::vector<float>* weights) {
+    if (dt_s <= 1e-6F ||
+        prev_points.size() < 2 ||
+        prev_points.size() != curr_points.size() ||
+        (weights != nullptr && weights->size() != prev_points.size())) {
+        return 0.0F;
+    }
+
+    cv::Point2f c_prev(0.0F, 0.0F);
+    cv::Point2f c_curr(0.0F, 0.0F);
+    float w_sum = 0.0F;
+    for (std::size_t i = 0; i < prev_points.size(); ++i) {
+        const float w = (weights == nullptr) ? 1.0F : std::max(0.0F, (*weights)[i]);
+        c_prev += prev_points[i] * w;
+        c_curr += curr_points[i] * w;
+        w_sum += w;
+    }
+    if (w_sum <= 1e-6F) {
+        return 0.0F;
+    }
+    c_prev *= (1.0F / w_sum);
+    c_curr *= (1.0F / w_sum);
+
+    double num = 0.0;
+    double den = 0.0;
+    for (std::size_t i = 0; i < prev_points.size(); ++i) {
+        const float w = (weights == nullptr) ? 1.0F : std::max(0.0F, (*weights)[i]);
+        const cv::Point2f rp = prev_points[i] - c_prev;
+        const cv::Point2f rc = curr_points[i] - c_curr;
+        num += static_cast<double>(w) * static_cast<double>(rp.x * rc.y - rp.y * rc.x);
+        den += static_cast<double>(w) * static_cast<double>(rp.x * rc.x + rp.y * rc.y);
+    }
+    if (std::abs(num) < 1e-12 && std::abs(den) < 1e-12) {
+        return 0.0F;
+    }
+    const double theta = std::atan2(num, den);
+    return static_cast<float>(theta / static_cast<double>(dt_s));
+}
+
 TrackManager::RecoveryState TrackManager::updateRecoveryState(
     const RecoveryState& prev,
     const std::vector<TrackPoint>& tracks,

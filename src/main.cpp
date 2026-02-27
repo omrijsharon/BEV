@@ -8,6 +8,9 @@
 #include "map/minimap_builder.hpp"
 #include "tracking/keypoint_initializer.hpp"
 #include "tracking/track_manager.hpp"
+#include "ipc/descriptors.hpp"
+#include "ipc/frame_pool.hpp"
+#include "ipc/spsc_ring.hpp"
 #include "web/dashboard_renderer.hpp"
 #include "web/mjpeg_server.hpp"
 
@@ -16,9 +19,14 @@
 #include <chrono>
 #include <cmath>
 #include <csignal>
+#include <cstring>
 #include <iostream>
 #include <string>
 #include <thread>
+
+#ifdef __linux__
+#include <unistd.h>
+#endif
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -91,6 +99,31 @@ int main(int argc, char** argv) {
     std::vector<bev::TrackPoint> tracks;
     RollSignABState ab_state{};
 
+    bev::ipc::SpscRing<bev::ipc::BevFrameDesc> q_bev_to_track(
+        static_cast<std::size_t>(config.ipc.ring_capacity_bev_to_track));
+    if (!q_bev_to_track.valid()) {
+        std::cerr << "Invalid ipc.ring_capacity_bev_to_track, expected power-of-two > 1\n";
+        return 1;
+    }
+
+    bev::ipc::ShmFramePool frame_pool;
+    bool ipc_singleproc_enabled = false;
+    std::string frame_pool_error;
+#ifdef __linux__
+    const std::string shm_name = "/bev_frame_pool_" + std::to_string(static_cast<long long>(::getpid()));
+    if (!frame_pool.create(
+            shm_name,
+            static_cast<std::size_t>(config.ipc.frame_pool_slots),
+            static_cast<std::size_t>(config.ipc.frame_payload_bytes),
+            frame_pool_error)) {
+        std::cerr << "IPC frame pool init failed, running fallback direct handoff: " << frame_pool_error << '\n';
+    } else {
+        ipc_singleproc_enabled = true;
+    }
+#else
+    std::cout << "IPC SHM frame pool unsupported on this OS, running fallback direct handoff\n";
+#endif
+
     std::cout << "Streaming on http://localhost:8080/stream/main\n";
     std::cout << "Mini-map on  http://localhost:8080/stream/map\n";
     std::cout << "Camera source: " << camera.activeSourceDescription() << '\n';
@@ -99,6 +132,7 @@ int main(int argc, char** argv) {
     bev::Telemetry telemetry;
     int frame_counter = 0;
     int64_t window_start_ns = bev::nowSteadyNs();
+    uint64_t sequence_id = 0;
 
     while (g_running.load()) {
         bev::FramePacket packet;
@@ -127,6 +161,75 @@ int main(int argc, char** argv) {
         bev_warp.warpToBEV(packet.undistorted_bgr, bev_frame, R_cam_world);
         cv::Mat bev_gray;
         cv::cvtColor(bev_frame, bev_gray, cv::COLOR_BGR2GRAY);
+        cv::Mat tracking_gray = bev_gray;
+
+        bool producer_slot_held = false;
+        bool consumer_slot_held = false;
+        std::size_t producer_slot_idx = 0;
+        std::size_t consumer_slot_idx = 0;
+
+        if (ipc_singleproc_enabled && frame_pool.acquireWritableSlot(producer_slot_idx)) {
+            producer_slot_held = true;
+            const std::size_t required_bytes = bev_gray.total() * bev_gray.elemSize();
+            const std::size_t payload_bytes = frame_pool.payloadBytesPerSlot();
+            uint8_t* dst = frame_pool.payloadPtr(producer_slot_idx);
+
+            if (dst != nullptr && required_bytes <= payload_bytes) {
+                if (bev_gray.isContinuous()) {
+                    std::memcpy(dst, bev_gray.data, required_bytes);
+                } else {
+                    for (int r = 0; r < bev_gray.rows; ++r) {
+                        std::memcpy(
+                            dst + static_cast<std::size_t>(r) * bev_gray.cols * bev_gray.elemSize(),
+                            bev_gray.ptr(r),
+                            static_cast<std::size_t>(bev_gray.cols) * bev_gray.elemSize());
+                    }
+                }
+
+                uint32_t generation = 0;
+                if (frame_pool.publishWrittenSlot(
+                        producer_slot_idx,
+                        static_cast<uint32_t>(bev_gray.cols),
+                        static_cast<uint32_t>(bev_gray.rows),
+                        static_cast<uint32_t>(bev_gray.type()),
+                        static_cast<uint32_t>(bev_gray.cols * bev_gray.elemSize()),
+                        packet.timestamp_ns,
+                        generation)) {
+                    auto desc = bev::ipc::makeBevFrameDesc();
+                    desc.frame_slot_id = static_cast<uint32_t>(producer_slot_idx);
+                    desc.generation = generation;
+                    desc.width = static_cast<uint32_t>(bev_gray.cols);
+                    desc.height = static_cast<uint32_t>(bev_gray.rows);
+                    desc.type = static_cast<uint32_t>(bev_gray.type());
+                    desc.stride = static_cast<uint32_t>(bev_gray.cols * bev_gray.elemSize());
+                    desc.sequence_id = sequence_id++;
+                    desc.timestamp_ns = packet.timestamp_ns;
+                    (void)q_bev_to_track.pushDropOldest(desc);
+
+                    bev::ipc::BevFrameDesc latest_desc{};
+                    bool got_desc = false;
+                    while (q_bev_to_track.pop(latest_desc)) {
+                        got_desc = true;
+                    }
+                    if (got_desc) {
+                        consumer_slot_idx = static_cast<std::size_t>(latest_desc.frame_slot_id);
+                        if (frame_pool.acquireReadSlot(consumer_slot_idx, latest_desc.generation)) {
+                            consumer_slot_held = true;
+                            const auto* hdr = frame_pool.header(consumer_slot_idx);
+                            uint8_t* src = frame_pool.payloadPtr(consumer_slot_idx);
+                            if (hdr != nullptr && src != nullptr) {
+                                tracking_gray = cv::Mat(
+                                    static_cast<int>(hdr->height),
+                                    static_cast<int>(hdr->width),
+                                    static_cast<int>(hdr->type),
+                                    src,
+                                    static_cast<std::size_t>(hdr->stride));
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         if (config.camera_mount.enable_roll_sign_ab_test) {
             const double roll_abs = std::abs(config.camera_mount.roll_deg);
@@ -177,7 +280,7 @@ int main(int argc, char** argv) {
         }
 
         const auto points = bev::KeypointInitializer::initializeShiTomasi(
-            bev_gray,
+            tracking_gray,
             config.tracking.num_keypoints,
             0.01,
             8.0);
@@ -205,7 +308,7 @@ int main(int argc, char** argv) {
             // Reinitialize to deterministic grid when texture confidence collapses.
             const int rows = std::max(1, static_cast<int>(std::sqrt(static_cast<double>(config.tracking.num_keypoints))));
             const int cols = std::max(1, config.tracking.num_keypoints / rows);
-            const auto grid = bev::KeypointInitializer::initializeGrid(bev_gray.size(), rows, cols, 20);
+            const auto grid = bev::KeypointInitializer::initializeGrid(tracking_gray.size(), rows, cols, 20);
             tracks.clear();
             tracks.reserve(grid.size());
             for (int i = 0; i < static_cast<int>(grid.size()); ++i) {
@@ -220,7 +323,14 @@ int main(int argc, char** argv) {
 
         if (!recovery.map_updates_paused) {
             const cv::Mat H_identity = cv::Mat::eye(3, 3, CV_64F);
-            minimap.addFrame(bev_gray, H_identity);
+            minimap.addFrame(tracking_gray, H_identity);
+        }
+
+        if (consumer_slot_held) {
+            frame_pool.releaseSlot(consumer_slot_idx);
+        }
+        if (producer_slot_held) {
+            frame_pool.releaseSlot(producer_slot_idx);
         }
 
         bev::DashboardStatus status{};

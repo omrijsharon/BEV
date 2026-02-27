@@ -71,5 +71,25 @@ int main() {
         return 1;
     }
 
+    std::vector<cv::Point2f> prev_pts{
+        {10.0F, 0.0F}, {0.0F, 10.0F}, {-10.0F, 0.0F}, {0.0F, -10.0F}};
+    std::vector<cv::Point2f> curr_pts;
+    std::vector<float> w{1.0F, 1.0F, 1.0F, 1.0F};
+    curr_pts.reserve(prev_pts.size());
+    const float dt = 0.1F;
+    const float omega_gt = 0.6F; // rad/s
+    const float theta = omega_gt * dt;
+    const float c = std::cos(theta);
+    const float s = std::sin(theta);
+    const cv::Point2f t(3.0F, -2.0F); // translation should not affect omega estimate
+    for (const auto& p : prev_pts) {
+        curr_pts.emplace_back(c * p.x - s * p.y + t.x, s * p.x + c * p.y + t.y);
+    }
+    const float omega_est = bev::TrackManager::estimateOmegaRadPerSec(prev_pts, curr_pts, dt, &w);
+    if (std::abs(omega_est - omega_gt) > 0.03F) {
+        std::cerr << "omega estimate mismatch est=" << omega_est << " gt=" << omega_gt << "\n";
+        return 1;
+    }
+
     return 0;
 }
